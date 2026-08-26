@@ -16,23 +16,32 @@ st.set_page_config(page_title="LegalGPT", page_icon="⚖️", layout="wide")
 st.title("⚖️ LegalGPT - Trợ lý Luật sư AI")
 st.markdown("Hãy tải lên một tài liệu pháp lý (PDF) và hỏi tôi bất kỳ câu hỏi nào về nó!")
 
+# Lấy API Key từ Streamlit Secrets (Bảo mật, không lộ trên Github)
+api_key = None
+if "GOOGLE_API_KEY" in st.secrets:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+elif "GOOGLE_API_KEY" in os.environ:
+    api_key = os.environ["GOOGLE_API_KEY"]
+
+# Đặt vào biến môi trường để Langchain có thể sử dụng
+if api_key:
+    os.environ["GOOGLE_API_KEY"] = api_key
+
 # --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
-    st.header("⚙️ Cấu hình")
-    api_key = st.text_input("Nhập Google API Key", type="password", help="Lấy key của bạn từ Google AI Studio")
+    st.header("⚙️ Tải Tài Liệu")
     
-    st.markdown("---")
+    if not api_key:
+        st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ quản trị viên!")
+        
     uploaded_file = st.file_uploader("Tải lên file PDF của bạn", type=["pdf"])
     
-    if st.button("Xử lý & Khởi tạo Dữ liệu", use_container_width=True):
+    if st.button("Xử lý Dữ liệu", use_container_width=True):
         if not api_key:
-            st.error("Vui lòng nhập API Key trước.")
+            st.error("Lỗi: Thiếu API Key.")
         elif not uploaded_file:
             st.error("Vui lòng tải lên một file PDF.")
         else:
-            os.environ["GOOGLE_API_KEY"] = api_key
-            st.session_state['api_key_set'] = True
-            
             with st.spinner("Đang xử lý tài liệu..."):
                 # Lưu file PDF người dùng tải lên vào một file tạm thời
                 with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
@@ -73,7 +82,7 @@ with st.sidebar:
                             success = True
                         except Exception as e:
                             if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
-                                status_text.warning("Phát hiện quá tải API (429). Tự động nghỉ 60 giây...")
+                                status_text.warning("Phát hiện quá tải API. Tự động nghỉ 60 giây...")
                                 time.sleep(60)
                             else:
                                 st.error(f"Lỗi: {e}")
@@ -102,8 +111,10 @@ for message in st.session_state.messages:
 
 # Accept user input
 if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
-    if 'vector_store' not in st.session_state:
-        st.warning("⚠️ Vui lòng nhập API Key, tải file PDF lên và ấn 'Xử lý' ở thanh bên trái trước.")
+    if not api_key:
+        st.error("⚠️ Hệ thống đang bảo trì (Thiếu API Key).")
+    elif 'vector_store' not in st.session_state:
+        st.warning("⚠️ Vui lòng tải file PDF lên và ấn 'Xử lý' ở thanh bên trái trước.")
     else:
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt_text})
@@ -116,8 +127,6 @@ if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
                 vector_store = st.session_state['vector_store']
                 retriever = vector_store.as_retriever(search_kwargs={"k": 40})
                 
-                # Lấy key từ input
-                os.environ["GOOGLE_API_KEY"] = api_key
                 llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1)
                 
                 system_prompt = (
