@@ -1,5 +1,6 @@
 import os
 import time
+import tempfile
 import streamlit as st
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -13,7 +14,7 @@ from langchain_core.prompts import ChatPromptTemplate
 st.set_page_config(page_title="LegalGPT", page_icon="⚖️", layout="wide")
 
 st.title("⚖️ LegalGPT - Trợ lý Luật sư AI")
-st.markdown("Hãy hỏi tôi bất kỳ câu hỏi pháp lý nào dựa trên tài liệu đã tải lên!")
+st.markdown("Hãy tải lên một tài liệu pháp lý (PDF) và hỏi tôi bất kỳ câu hỏi nào về nó!")
 
 # --- SIDEBAR CONFIGURATION ---
 with st.sidebar:
@@ -21,73 +22,74 @@ with st.sidebar:
     api_key = st.text_input("Nhập Google API Key", type="password", help="Lấy key của bạn từ Google AI Studio")
     
     st.markdown("---")
-    st.markdown("Đảm bảo file `document.pdf` nằm trong cùng thư mục với mã nguồn.")
+    uploaded_file = st.file_uploader("Tải lên file PDF của bạn", type=["pdf"])
     
-    if st.button("Khởi tạo Dữ liệu", use_container_width=True):
+    if st.button("Xử lý & Khởi tạo Dữ liệu", use_container_width=True):
         if not api_key:
             st.error("Vui lòng nhập API Key trước.")
+        elif not uploaded_file:
+            st.error("Vui lòng tải lên một file PDF.")
         else:
             os.environ["GOOGLE_API_KEY"] = api_key
             st.session_state['api_key_set'] = True
             
-            with st.spinner("Đang khởi tạo Dữ liệu..."):
+            with st.spinner("Đang xử lý tài liệu..."):
+                # Lưu file PDF người dùng tải lên vào một file tạm thời
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                    temp_file.write(uploaded_file.getvalue())
+                    temp_file_path = temp_file.name
+
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
                 
-                # Check if database already exists
-                if os.path.exists("faiss_index"):
-                    st.success("✅ Đã tìm thấy dữ liệu vector. Đang tải từ ổ cứng.")
-                    vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
+                st.info("⏳ Đang đọc và cắt nhỏ tài liệu PDF...")
+                loader = PyPDFLoader(temp_file_path)
+                docs = loader.load()
+                text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
+                chunks = text_splitter.split_documents(docs)
+                
+                st.info(f"🧠 Đang mã hóa {len(chunks)} đoạn văn bản...")
+                vector_store = None
+                batch_size = 5
+                
+                # UI Progress bar
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                for i in range(0, len(chunks), batch_size):
+                    batch = chunks[i:i+batch_size]
+                    current_batch = i//batch_size + 1
+                    total_batches = (len(chunks) + batch_size - 1)//batch_size
+                    
+                    status_text.text(f"Đang nhúng lô {current_batch}/{total_batches}...")
+                    progress_bar.progress(current_batch / total_batches)
+                    
+                    success = False
+                    while not success:
+                        try:
+                            if vector_store is None:
+                                vector_store = FAISS.from_documents(batch, embeddings)
+                            else:
+                                vector_store.add_documents(batch)
+                            success = True
+                        except Exception as e:
+                            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
+                                status_text.warning("Phát hiện quá tải API (429). Tự động nghỉ 60 giây...")
+                                time.sleep(60)
+                            else:
+                                st.error(f"Lỗi: {e}")
+                                break
+                    
+                    # Tránh quá tải
+                    if i + batch_size < len(chunks):
+                        time.sleep(5)
+                        
+                if vector_store:
+                    # Lưu vào RAM (session_state) thay vì lưu ra ổ cứng để người dùng khác không bị trùng
                     st.session_state['vector_store'] = vector_store
-                else:
-                    if not os.path.exists("document.pdf"):
-                        st.error("Không tìm thấy document.pdf trong thư mục!")
-                    else:
-                        st.info("⏳ Đang tải và cắt nhỏ tài liệu PDF...")
-                        loader = PyPDFLoader("document.pdf")
-                        docs = loader.load()
-                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-                        chunks = text_splitter.split_documents(docs)
-                        
-                        st.info(f"🧠 Đang mã hóa {len(chunks)} đoạn vector...")
-                        vector_store = None
-                        batch_size = 5
-                        
-                        # UI Progress bar
-                        progress_bar = st.progress(0)
-                        status_text = st.empty()
-                        
-                        for i in range(0, len(chunks), batch_size):
-                            batch = chunks[i:i+batch_size]
-                            current_batch = i//batch_size + 1
-                            total_batches = (len(chunks) + batch_size - 1)//batch_size
-                            
-                            status_text.text(f"Đang nhúng lô {current_batch}/{total_batches}...")
-                            progress_bar.progress(current_batch / total_batches)
-                            
-                            success = False
-                            while not success:
-                                try:
-                                    if vector_store is None:
-                                        vector_store = FAISS.from_documents(batch, embeddings)
-                                    else:
-                                        vector_store.add_documents(batch)
-                                    success = True
-                                except Exception as e:
-                                    if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
-                                        status_text.warning("Phát hiện quá tải API (429). Tự động nghỉ 60 giây...")
-                                        time.sleep(60)
-                                    else:
-                                        st.error(f"Lỗi: {e}")
-                                        break
-                            
-                            # Small delay between batches to respect rate limits
-                            if i + batch_size < len(chunks):
-                                time.sleep(5)
-                                
-                        if vector_store:
-                            vector_store.save_local("faiss_index")
-                            st.success("✅ Đã lưu dữ liệu vào 'faiss_index'.")
-                            st.session_state['vector_store'] = vector_store
+                    st.success("✅ Đã xử lý xong tài liệu! Bạn có thể bắt đầu hỏi.")
+                
+                # Xóa file tạm sau khi xử lý xong
+                os.remove(temp_file_path)
 
 # --- MAIN CHAT INTERFACE ---
 if 'messages' not in st.session_state:
@@ -101,7 +103,7 @@ for message in st.session_state.messages:
 # Accept user input
 if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
     if 'vector_store' not in st.session_state:
-        st.warning("⚠️ Vui lòng nhập API Key và ấn 'Khởi tạo Dữ liệu' ở thanh bên trái trước.")
+        st.warning("⚠️ Vui lòng nhập API Key, tải file PDF lên và ấn 'Xử lý' ở thanh bên trái trước.")
     else:
         # Add user message to chat history
         st.session_state.messages.append({"role": "user", "content": prompt_text})
@@ -114,6 +116,7 @@ if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
                 vector_store = st.session_state['vector_store']
                 retriever = vector_store.as_retriever(search_kwargs={"k": 40})
                 
+                # Lấy key từ input
                 os.environ["GOOGLE_API_KEY"] = api_key
                 llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1)
                 
