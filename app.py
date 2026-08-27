@@ -22,7 +22,7 @@ def ocr_page_with_gemini(page, api_key):
         img_data = pix.tobytes("jpeg")
         encoded_img = base64.b64encode(img_data).decode("utf-8")
         
-        llm_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.0, google_api_key=api_key)
+        llm_vision = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.0, google_api_key=api_key)
         message = HumanMessage(
             content=[
                 {"type": "text", "text": "Trích xuất toàn bộ văn bản trong bức ảnh này, giữ nguyên định dạng đoạn văn. Chỉ trả về văn bản được trích xuất, không thêm bình luận nào khác. Nếu không có chữ nào, hãy trả về chuỗi rỗng."},
@@ -30,7 +30,10 @@ def ocr_page_with_gemini(page, api_key):
             ]
         )
         response = llm_vision.invoke([message])
-        return response.content
+        content = response.content
+        if isinstance(content, list):
+            return " ".join([item.get("text", "") for item in content if isinstance(item, dict) and "text" in item])
+        return str(content)
     except Exception as e:
         return ""
 
