@@ -13,10 +13,10 @@ from langchain_classic.chains.combine_documents import create_stuff_documents_ch
 from langchain_core.prompts import ChatPromptTemplate
 
 # Configure the web page
-st.set_page_config(page_title="LegalGPT", page_icon="⚖️", layout="wide")
+st.set_page_config(page_title="DocumentAI", page_icon="📄", layout="wide")
 
-st.title("⚖️ LegalGPT - Trợ lý Luật sư AI")
-st.markdown("Hãy tải lên một tài liệu pháp lý (PDF) và hỏi tôi bất kỳ câu hỏi nào về nó!")
+st.title("📄 DocumentAI - Trợ lý Đọc hiểu Tài liệu")
+st.markdown("Hãy tải lên bất kỳ tài liệu nào (PDF) và hỏi tôi mọi thứ về nội dung bên trong!")
 
 # Lấy API Key từ Streamlit Secrets (Bảo mật, không lộ trên Github)
 api_key = None
@@ -98,7 +98,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # Accept user input
-if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
+if prompt_text := st.chat_input("Hỏi câu hỏi về tài liệu..."):
     if not api_key:
         st.error("⚠️ Hệ thống đang bảo trì (Thiếu API Key).")
     elif 'vector_store' not in st.session_state:
@@ -111,21 +111,21 @@ if prompt_text := st.chat_input("Hỏi câu hỏi pháp lý..."):
 
         # Generate assistant response
         with st.chat_message("assistant"):
-            with st.spinner("Đang phân tích hồ sơ pháp lý..."):
+            with st.spinner("Đang phân tích tài liệu..."):
                 vector_store = st.session_state['vector_store']
                 retriever = vector_store.as_retriever(search_kwargs={"k": 40})
                 
                 llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1)
                 
                 system_prompt = (
-                    "Bạn là LegalGPT - một Chuyên gia Pháp lý và Luật sư Tư vấn cấp cao.\n"
-                    "Nhiệm vụ của bạn là tư vấn, giải đáp thắc mắc pháp lý TRÊN CƠ SỞ NGỮ CẢNH ĐƯỢC CUNG CẤP.\n\n"
+                    "Bạn là DocumentAI - một Trợ lý Đọc hiểu và Tóm tắt Tài liệu thông minh.\n"
+                    "Nhiệm vụ của bạn là giải đáp thắc mắc, trích xuất thông tin TRÊN CƠ SỞ NỘI DUNG TÀI LIỆU ĐƯỢC CUNG CẤP.\n\n"
                     "NGUYÊN TẮC HOẠT ĐỘNG:\n"
-                    "1. CHÍNH XÁC & KHÁCH QUAN: Tuyệt đối không tự bịa ra điều luật, mức phạt hay quy định nếu không có trong ngữ cảnh.\n"
-                    "2. TRÍCH DẪN CƠ SỞ: Luôn cố gắng trích dẫn cụ thể (Điều mấy, Khoản mấy, Chương nào) nếu ngữ cảnh có đề cập.\n"
-                    "3. RÕ RÀNG & DỄ HIỂU: Trình bày mạch lạc bằng gạch đầu dòng, giải thích các thuật ngữ pháp lý phức tạp cho người dân bình thường hiểu.\n"
-                    "4. BẢO LƯU: Nếu thông tin trong ngữ cảnh không đủ để trả lời chính xác, hãy nói rõ: 'Dựa trên tài liệu được cung cấp, không có đủ thông tin quy định về vấn đề này...'\n\n"
-                    "NGỮ CẢNH PHÁP LÝ:\n{context}"
+                    "1. CHÍNH XÁC & TRUNG THỰC: Tuyệt đối không tự bịa ra số liệu, sự kiện hay thông tin nếu không có trong tài liệu.\n"
+                    "2. TRÍCH DẪN RÕ RÀNG: Hãy cố gắng nói rõ thông tin đó nằm ở phần nào, trang nào (nếu tài liệu có đề cập).\n"
+                    "3. RÕ RÀNG & DỄ HIỂU: Trình bày mạch lạc bằng gạch đầu dòng, giải thích các thuật ngữ chuyên ngành một cách dễ hiểu.\n"
+                    "4. BẢO LƯU: Nếu thông tin trong tài liệu không đủ để trả lời chính xác, hãy nói rõ: 'Dựa trên tài liệu được cung cấp, không có đủ thông tin về vấn đề này...'\n\n"
+                    "NỘI DUNG TÀI LIỆU (NGỮ CẢNH):\n{context}"
                 )
                 
                 chain_prompt = ChatPromptTemplate.from_messages([

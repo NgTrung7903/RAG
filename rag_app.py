@@ -52,18 +52,18 @@ else:
 
 retriever = vector_store.as_retriever(search_kwargs={"k": 15}) 
 
-print("🤖 STEP 4: Initializing LegalGPT brain...")
+print("🤖 STEP 4: Initializing DocumentAI brain...")
 llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1) 
 
 system_prompt = (
-    "You are LegalGPT - a Senior Legal Expert and Consultant Lawyer.\n"
-    "Your task is to consult and answer legal questions BASED ON THE PROVIDED CONTEXT.\n\n"
-    "OPERATING PRINCIPLES:\n"
-    "1. ACCURATE & OBJECTIVE: Absolutely do not fabricate laws, fines, or regulations if they are not in the context.\n"
-    "2. CITE BASES: Always try to cite specifics (which Article, Clause, Chapter) if mentioned in the context.\n"
-    "3. CLEAR & UNDERSTANDABLE: Present clearly using bullet points, explain complex legal terms for ordinary people to understand.\n"
-    "4. RESERVATION: If the information in the context is not enough to answer accurately, clearly state: 'Based on the provided documents, there is not enough information regulating this issue...'\n\n"
-    "LEGAL CONTEXT:\n{context}"
+    "Bạn là DocumentAI - một Trợ lý Đọc hiểu và Tóm tắt Tài liệu thông minh.\n"
+    "Nhiệm vụ của bạn là giải đáp thắc mắc, trích xuất thông tin TRÊN CƠ SỞ NỘI DUNG TÀI LIỆU ĐƯỢC CUNG CẤP.\n\n"
+    "NGUYÊN TẮC HOẠT ĐỘNG:\n"
+    "1. CHÍNH XÁC & TRUNG THỰC: Tuyệt đối không tự bịa ra số liệu, sự kiện hay thông tin nếu không có trong tài liệu.\n"
+    "2. TRÍCH DẪN RÕ RÀNG: Hãy cố gắng nói rõ thông tin đó nằm ở phần nào, trang nào (nếu tài liệu có đề cập).\n"
+    "3. RÕ RÀNG & DỄ HIỂU: Trình bày mạch lạc bằng gạch đầu dòng, giải thích các thuật ngữ chuyên ngành một cách dễ hiểu.\n"
+    "4. BẢO LƯU: Nếu thông tin trong tài liệu không đủ để trả lời chính xác, hãy nói rõ: 'Dựa trên tài liệu được cung cấp, không có đủ thông tin về vấn đề này...'\n\n"
+    "NỘI DUNG TÀI LIỆU (NGỮ CẢNH):\n{context}"
 )
 
 prompt = ChatPromptTemplate.from_messages([
@@ -75,20 +75,20 @@ question_answer_chain = create_stuff_documents_chain(llm, prompt)
 rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 
 print("\n" + "="*50)
-print("⚖️  LEGAL CONSULTING SYSTEM (LEGAL-GPT) IS READY! ⚖️")
+print("📄  DOCUMENT AI SYSTEM IS READY! 📄")
 print("="*50)
-print("Hint: You can ask about specific cases, fines, or request a summary of a law.")
+print("Hint: You can ask to summarize the document, extract data, or explain concepts.")
 
 while True:
-    user_question = input("\n🧑‍⚖️ Your question (Type 'exit' to quit): ")
+    user_question = input("\n👤 Your question (Type 'exit' to quit): ")
     if user_question.lower() == 'exit':
         print("Goodbye! Have a good day.")
         break
         
-    print("⏳ LegalGPT is looking up records and analyzing the law...")
+    print("⏳ DocumentAI is looking up records and analyzing the document...")
     response = rag_chain.invoke({"input": user_question})
     
     print("\n" + "-"*50)
-    print(f"📜 LAWYER'S ANSWER:\n{response.get('answer', '')}")
+    print(f"🤖 AI'S ANSWER:\n{response.get('answer', '')}")
     print("DEBUG RAW RESPONSE:", repr(response))
     print("-" * 50)
