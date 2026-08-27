@@ -2,9 +2,11 @@ import os
 import time
 import sys
 sys.stdout.reconfigure(encoding='utf-8')
-from langchain_community.document_loaders import PyPDFLoader
+import gc
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
@@ -12,44 +14,40 @@ from langchain_core.prompts import ChatPromptTemplate
 
 os.environ["GOOGLE_API_KEY"] = "YOUR_API_KEY_HERE"
 
-embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+embeddings = HuggingFaceEmbeddings(model_name="keepitreal/vietnamese-sbert")
 
 if os.path.exists("faiss_index"):
     print("✅ Vector data found. Loading from disk (no API cost)...")
     vector_store = FAISS.load_local("faiss_index", embeddings, allow_dangerous_deserialization=True)
 else:
-    print("⏳ STEP 1: Loading and splitting PDF document...")
-    loader = PyPDFLoader("document.pdf")
-    docs = loader.load()
+    print("⏳ STEP 1 & 2 & 3: Loading and embedding PDF document page by page...")
+    loader = PyMuPDFLoader("document.pdf")
     text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-    chunks = text_splitter.split_documents(docs)
-
-    print(f"🧠 STEP 2 & 3: Encoding {len(chunks)} vector chunks...")
+    
     vector_store = None
-    batch_size = 5 
-    for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i+batch_size]
-        print(f"  -> Embedding batch {i//batch_size + 1}/{(len(chunks) + batch_size - 1)//batch_size} (contains {len(batch)} chunks)...")
+    batch_size = 32 # Tăng batch_size vì không bị giới hạn API
+    total_chunks = 0
+    
+    for page_idx, doc_page in enumerate(loader.lazy_load()):
+        page_chunks = text_splitter.split_documents([doc_page])
         
-        success = False
-        while not success:
-            try:
-                if vector_store is None:
-                    vector_store = FAISS.from_documents(batch, embeddings)
-                else:
-                    vector_store.add_documents(batch)
-                success = True
-            except Exception as e:
-                if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
-                    print("     [API overload detected (429). System will automatically pause for 60 seconds then retry...]")
-                    time.sleep(60)
-                else:
-                    raise e
-        
-        if i + batch_size < len(chunks):
-            time.sleep(5)
+        for i in range(0, len(page_chunks), batch_size):
+            batch = page_chunks[i:i+batch_size]
+            total_chunks += len(batch)
+            print(f"  -> Embedding up to chunk {total_chunks}...")
             
-    vector_store.save_local("faiss_index")
+            if vector_store is None:
+                vector_store = FAISS.from_documents(batch, embeddings)
+            else:
+                vector_store.add_documents(batch)
+            
+        # Save after each page to avoid data loss on crash
+        if vector_store:
+            vector_store.save_local("faiss_index")
+            
+        del page_chunks
+        gc.collect()
+        
     print("✅ Data saved to 'faiss_index'. Next run will skip this step!")
 
 retriever = vector_store.as_retriever(search_kwargs={"k": 15}) 

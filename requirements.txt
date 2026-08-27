@@ -2,5 +2,7 @@ streamlit
 langchain
 langchain-google-genai
 langchain-community
+langchain-huggingface
+sentence-transformers
 faiss-cpu
-pypdf
+pymupdf

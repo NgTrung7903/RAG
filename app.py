@@ -1,10 +1,12 @@
 import os
 import time
 import tempfile
+import gc
 import streamlit as st
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
@@ -34,71 +36,57 @@ with st.sidebar:
     if not api_key:
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ quản trị viên!")
         
-    uploaded_file = st.file_uploader("Tải lên file PDF của bạn", type=["pdf"])
+    uploaded_files = st.file_uploader("Tải lên các file PDF của bạn", type=["pdf"], accept_multiple_files=True)
     
     if st.button("Xử lý Dữ liệu", use_container_width=True):
         if not api_key:
             st.error("Lỗi: Thiếu API Key.")
-        elif not uploaded_file:
-            st.error("Vui lòng tải lên một file PDF.")
+        elif not uploaded_files:
+            st.error("Vui lòng tải lên ít nhất một file PDF.")
         else:
             with st.spinner("Đang xử lý tài liệu..."):
-                # Lưu file PDF người dùng tải lên vào một file tạm thời
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
-                    temp_file.write(uploaded_file.getvalue())
-                    temp_file_path = temp_file.name
-
-                embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001")
+                st.info("⏳ Đang tải mô hình nhúng (Embedding Model) Local...")
+                embeddings = HuggingFaceEmbeddings(model_name="keepitreal/vietnamese-sbert")
                 
-                st.info("⏳ Đang đọc và cắt nhỏ tài liệu PDF...")
-                loader = PyPDFLoader(temp_file_path)
-                docs = loader.load()
-                text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-                chunks = text_splitter.split_documents(docs)
-                
-                st.info(f"🧠 Đang mã hóa {len(chunks)} đoạn văn bản...")
                 vector_store = None
-                batch_size = 5
-                
-                # UI Progress bar
-                progress_bar = st.progress(0)
+                batch_size = 32
                 status_text = st.empty()
+                total_chunks_processed = 0
                 
-                for i in range(0, len(chunks), batch_size):
-                    batch = chunks[i:i+batch_size]
-                    current_batch = i//batch_size + 1
-                    total_batches = (len(chunks) + batch_size - 1)//batch_size
+                for file_obj in uploaded_files:
+                    st.info(f"📄 Đang xử lý file: {file_obj.name}...")
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as temp_file:
+                        temp_file.write(file_obj.getvalue())
+                        temp_file_path = temp_file.name
+                        
+                    loader = PyMuPDFLoader(temp_file_path)
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
                     
-                    status_text.text(f"Đang nhúng lô {current_batch}/{total_batches}...")
-                    progress_bar.progress(current_batch / total_batches)
-                    
-                    success = False
-                    while not success:
-                        try:
+                    for doc_page in loader.lazy_load():
+                        page_chunks = text_splitter.split_documents([doc_page])
+                        
+                        for i in range(0, len(page_chunks), batch_size):
+                            batch = page_chunks[i:i+batch_size]
+                            total_chunks_processed += len(batch)
+                            
+                            status_text.text(f"Đang nhúng... (Đã băm và xử lý {total_chunks_processed} đoạn văn bản từ các file)")
+                            
                             if vector_store is None:
                                 vector_store = FAISS.from_documents(batch, embeddings)
                             else:
                                 vector_store.add_documents(batch)
-                            success = True
-                        except Exception as e:
-                            if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e) or "Quota" in str(e):
-                                status_text.warning("Phát hiện quá tải API. Tự động nghỉ 60 giây...")
-                                time.sleep(60)
-                            else:
-                                st.error(f"Lỗi: {e}")
-                                break
-                    
-                    # Tránh quá tải
-                    if i + batch_size < len(chunks):
-                        time.sleep(5)
+                                
+                        if vector_store:
+                            vector_store.save_local("faiss_index_temp")
+                            
+                        del page_chunks
+                        gc.collect()
+                        
+                    os.remove(temp_file_path)
                         
                 if vector_store:
-                    # Lưu vào RAM (session_state) thay vì lưu ra ổ cứng để người dùng khác không bị trùng
                     st.session_state['vector_store'] = vector_store
-                    st.success("✅ Đã xử lý xong tài liệu! Bạn có thể bắt đầu hỏi.")
-                
-                # Xóa file tạm sau khi xử lý xong
-                os.remove(temp_file_path)
+                    st.success("✅ Đã xử lý xong toàn bộ tài liệu! Bạn có thể bắt đầu hỏi.")
 
 # --- MAIN CHAT INTERFACE ---
 if 'messages' not in st.session_state:
