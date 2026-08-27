@@ -5,7 +5,7 @@ import gc
 import base64
 import fitz
 import streamlit as st
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
