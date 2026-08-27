@@ -2,7 +2,11 @@ import os
 import time
 import tempfile
 import gc
+import base64
+import fitz
 import streamlit as st
+from langchain.schema import Document
+from langchain_core.messages import HumanMessage
 from langchain_community.document_loaders import PyMuPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -11,6 +15,25 @@ from langchain_community.vectorstores import FAISS
 from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
+
+def ocr_page_with_gemini(page, api_key):
+    try:
+        pix = page.get_pixmap(dpi=150)
+        img_data = pix.tobytes("jpeg")
+        encoded_img = base64.b64encode(img_data).decode("utf-8")
+        
+        llm_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.0, google_api_key=api_key)
+        message = HumanMessage(
+            content=[
+                {"type": "text", "text": "Trích xuất toàn bộ văn bản trong bức ảnh này, giữ nguyên định dạng đoạn văn. Chỉ trả về văn bản được trích xuất, không thêm bình luận nào khác. Nếu không có chữ nào, hãy trả về chuỗi rỗng."},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_img}"}}
+            ]
+        )
+        response = llm_vision.invoke([message])
+        return response.content
+    except Exception as e:
+        return ""
+
 
 # Configure the web page
 st.set_page_config(page_title="DocumentAI", page_icon="📄", layout="wide")
@@ -37,6 +60,7 @@ with st.sidebar:
         st.error("⚠️ Hệ thống chưa được cấu hình API Key. Vui lòng liên hệ quản trị viên!")
         
     uploaded_files = st.file_uploader("Tải lên các file PDF của bạn", type=["pdf"], accept_multiple_files=True)
+    use_ocr = st.checkbox("Sử dụng OCR bằng AI (Dành cho file Scan/Hình ảnh)", help="Bật tính năng này nếu file PDF của bạn là ảnh chụp (file Scan). Lưu ý: Tính năng này sẽ tốn nhiều thời gian xử lý hơn do phải dùng AI quét từng trang.")
     
     if st.button("Xử lý Dữ liệu", use_container_width=True):
         if not api_key:
@@ -59,29 +83,57 @@ with st.sidebar:
                         temp_file.write(file_obj.getvalue())
                         temp_file_path = temp_file.name
                         
-                    loader = PyMuPDFLoader(temp_file_path)
-                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
-                    
-                    for doc_page in loader.lazy_load():
-                        page_chunks = text_splitter.split_documents([doc_page])
+                    if use_ocr:
+                        doc = fitz.open(temp_file_path)
+                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
                         
-                        for i in range(0, len(page_chunks), batch_size):
-                            batch = page_chunks[i:i+batch_size]
-                            total_chunks_processed += len(batch)
+                        for page_num in range(len(doc)):
+                            page = doc[page_num]
+                            status_text.text(f"Đang quét OCR trang {page_num+1}/{len(doc)} của {file_obj.name}...")
+                            ocr_text = ocr_page_with_gemini(page, api_key)
                             
-                            status_text.text(f"Đang nhúng... (Đã băm và xử lý {total_chunks_processed} đoạn văn bản từ các file)")
-                            
-                            if vector_store is None:
-                                vector_store = FAISS.from_documents(batch, embeddings)
-                            else:
-                                vector_store.add_documents(batch)
+                            if ocr_text.strip():
+                                doc_page = Document(page_content=ocr_text, metadata={"source": file_obj.name, "page": page_num})
+                                page_chunks = text_splitter.split_documents([doc_page])
                                 
-                        if vector_store:
-                            vector_store.save_local("faiss_index_temp")
-                            
-                        del page_chunks
-                        gc.collect()
+                                for i in range(0, len(page_chunks), batch_size):
+                                    batch = page_chunks[i:i+batch_size]
+                                    total_chunks_processed += len(batch)
+                                    status_text.text(f"Đang nhúng... (Đã băm và xử lý {total_chunks_processed} đoạn văn bản từ các file)")
+                                    
+                                    if vector_store is None:
+                                        vector_store = FAISS.from_documents(batch, embeddings)
+                                    else:
+                                        vector_store.add_documents(batch)
+                                        
+                                if vector_store:
+                                    vector_store.save_local("faiss_index_temp")
+                            gc.collect()
+                        doc.close()
+                    else:
+                        loader = PyMuPDFLoader(temp_file_path)
+                        text_splitter = RecursiveCharacterTextSplitter(chunk_size=2500, chunk_overlap=500)
                         
+                        for doc_page in loader.lazy_load():
+                            page_chunks = text_splitter.split_documents([doc_page])
+                            
+                            for i in range(0, len(page_chunks), batch_size):
+                                batch = page_chunks[i:i+batch_size]
+                                total_chunks_processed += len(batch)
+                                
+                                status_text.text(f"Đang nhúng... (Đã băm và xử lý {total_chunks_processed} đoạn văn bản từ các file)")
+                                
+                                if vector_store is None:
+                                    vector_store = FAISS.from_documents(batch, embeddings)
+                                else:
+                                    vector_store.add_documents(batch)
+                                    
+                            if vector_store:
+                                vector_store.save_local("faiss_index_temp")
+                                
+                            del page_chunks
+                            gc.collect()
+                            
                     os.remove(temp_file_path)
                         
                 if vector_store:
