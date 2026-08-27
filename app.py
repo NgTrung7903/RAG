@@ -16,13 +16,13 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-def ocr_page_with_gemini(page, api_key, retries=3):
+def ocr_page_with_gemini(page, api_key, retries=5):
     try:
         pix = page.get_pixmap(dpi=150)
         img_data = pix.tobytes("jpeg")
         encoded_img = base64.b64encode(img_data).decode("utf-8")
         
-        llm_vision = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.0, google_api_key=api_key)
+        llm_vision = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.0, google_api_key=api_key)
         message = HumanMessage(
             content=[
                 {"type": "text", "text": "Trích xuất toàn bộ văn bản trong bức ảnh này, giữ nguyên định dạng đoạn văn. Chỉ trả về văn bản được trích xuất, không thêm bình luận nào khác. Nếu không có chữ nào, hãy trả về chuỗi rỗng."},
@@ -32,8 +32,8 @@ def ocr_page_with_gemini(page, api_key, retries=3):
         
         for attempt in range(retries):
             try:
-                # Ngủ 4 giây trước mỗi request để tránh lỗi Rate Limit (15 requests/minute của free tier)
-                time.sleep(4.1) 
+                # Ngủ 5 giây trước mỗi request để đảm bảo chỉ gọi 12 request/phút (giới hạn free tier là 15 RPM)
+                time.sleep(5) 
                 response = llm_vision.invoke([message])
                 content = response.content
                 if isinstance(content, list):
@@ -43,7 +43,9 @@ def ocr_page_with_gemini(page, api_key, retries=3):
                 err_str = str(e).lower()
                 if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
                     if attempt < retries - 1:
-                        time.sleep(10) # Đợi lâu hơn nếu dính rate limit
+                        import streamlit as st
+                        st.warning("⚠️ Google API đang bị quá tải (vượt quá 15 trang/phút). Tự động chờ 60 giây để tiếp tục...")
+                        time.sleep(60) # Chờ hẳn 60 giây để Google reset lượt gọi
                         continue
                 raise e # Nếu lỗi khác hoặc hết lượt thử thì văng lỗi
                 
@@ -187,7 +189,7 @@ if prompt_text := st.chat_input("Hỏi câu hỏi về tài liệu..."):
                 vector_store = st.session_state['vector_store']
                 retriever = vector_store.as_retriever(search_kwargs={"k": 40})
                 
-                llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1)
+                llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
                 
                 system_prompt = (
                     "Bạn là DocumentAI - một Trợ lý Đọc hiểu và Tóm tắt Tài liệu thông minh.\n"

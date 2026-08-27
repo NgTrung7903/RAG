@@ -53,7 +53,7 @@ else:
 retriever = vector_store.as_retriever(search_kwargs={"k": 15}) 
 
 print("🤖 STEP 4: Initializing DocumentAI brain...")
-llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash", temperature=0.1) 
+llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1) 
 
 system_prompt = (
     "Bạn là DocumentAI - một Trợ lý Đọc hiểu và Tóm tắt Tài liệu thông minh.\n"
