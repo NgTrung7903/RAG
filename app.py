@@ -16,7 +16,7 @@ from langchain_classic.chains import create_retrieval_chain
 from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 from langchain_core.prompts import ChatPromptTemplate
 
-def ocr_page_with_gemini(page, api_key):
+def ocr_page_with_gemini(page, api_key, retries=3):
     try:
         pix = page.get_pixmap(dpi=150)
         img_data = pix.tobytes("jpeg")
@@ -29,12 +29,27 @@ def ocr_page_with_gemini(page, api_key):
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{encoded_img}"}}
             ]
         )
-        response = llm_vision.invoke([message])
-        content = response.content
-        if isinstance(content, list):
-            return " ".join([item.get("text", "") for item in content if isinstance(item, dict) and "text" in item])
-        return str(content)
+        
+        for attempt in range(retries):
+            try:
+                # Ngủ 4 giây trước mỗi request để tránh lỗi Rate Limit (15 requests/minute của free tier)
+                time.sleep(4.1) 
+                response = llm_vision.invoke([message])
+                content = response.content
+                if isinstance(content, list):
+                    return " ".join([item.get("text", "") for item in content if isinstance(item, dict) and "text" in item])
+                return str(content)
+            except Exception as e:
+                err_str = str(e).lower()
+                if "429" in err_str or "quota" in err_str or "exhausted" in err_str:
+                    if attempt < retries - 1:
+                        time.sleep(10) # Đợi lâu hơn nếu dính rate limit
+                        continue
+                raise e # Nếu lỗi khác hoặc hết lượt thử thì văng lỗi
+                
     except Exception as e:
+        import streamlit as st
+        st.error(f"Lỗi OCR từ API Google: {str(e)}")
         return ""
 
 
@@ -142,6 +157,8 @@ with st.sidebar:
                 if vector_store:
                     st.session_state['vector_store'] = vector_store
                     st.success("✅ Đã xử lý xong toàn bộ tài liệu! Bạn có thể bắt đầu hỏi.")
+                else:
+                    st.error("❌ Xử lý thất bại: Không thể trích xuất được chữ nào từ tài liệu (File trắng hoặc bị lỗi API).")
 
 # --- MAIN CHAT INTERFACE ---
 if 'messages' not in st.session_state:
